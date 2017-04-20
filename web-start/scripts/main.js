@@ -57,7 +57,7 @@ function FriendlyChat() {
 FriendlyChat.prototype.initFirebase = function() {
   this.auth = firebase.auth()
   this.database = firebase.database()
-  this.storage = firebase.storage
+  this.storage = firebase.storage()
 
   this.auth.onAuthStateChanged(this.onAuthStateChanged.bind(this))
 };
@@ -94,15 +94,20 @@ FriendlyChat.prototype.saveMessage = function(e) {
 };
 
 // Sets the URL of the given img element with the URL of the image stored in Cloud Storage.
-FriendlyChat.prototype.setImageUrl = function(imageUri, imgElement) {
-  imgElement.src = imageUri;
+FriendlyChat.prototype.setImageUrl = async function(imageUri, imgElement) {
+  if (imageUri.startsWith('gs://')) {
+    imgElement.src = FriendlyChat.LOADING_IMAGE_URL
+    const metadata = await this.storage.refFromURL(imageUri).getMetadata()
+    imgElement.src = metadata.downloadURLs[0]
+    return
+  }
 
-  // TODO(DEVELOPER): If image is on Cloud Storage, fetch image URL and set img element's src.
+  imgElement.src = imageUri
 };
 
 // Saves a new message containing an image URI in Firebase.
 // This first saves the image in Firebase storage.
-FriendlyChat.prototype.saveImageMessage = function(event) {
+FriendlyChat.prototype.saveImageMessage = async function(event) {
   event.preventDefault();
   var file = event.target.files[0];
 
@@ -120,9 +125,28 @@ FriendlyChat.prototype.saveImageMessage = function(event) {
   }
   // Check if the user is signed-in
   if (this.checkSignedInWithMessage()) {
+    const { currentUser } = this.auth
+    let messageData
+    try {
+        messageData = await this.messagesRef.push({
+        name: currentUser.displayName,
+        imageUrl: FriendlyChat.LOADING_IMAGE_URL,
+        photoUrl: currentUser.photoURL
+      })
+    } catch(error) {
+      console.error('error occured while uploading images', error)
+    }
 
-    // TODO(DEVELOPER): Upload image to Firebase storage and add message.
+    const imagePath = `${currentUser.uid}/${messageData.key}/${file.name}`
+    const storageData = await new Promise(resolve => {
+      this.storage.ref(imagePath).put(file)
+        .then(resolve)
+    })
 
+    const uploadedPath = storageData.metadata.fullPath
+    messageData.update({
+      imageUrl: this.storage.ref(uploadedPath).toString()
+    })
   }
 };
 
